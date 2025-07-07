@@ -1,0 +1,19 @@
+apiVersion: atlas.mongodb.com/v1
+kind: AtlasBackupSchedule
+metadata:
+    name: atlasbackupschedule-sample
+spec:
+  autoExportEnabled: false
+  referenceHourOfDay: 10
+  referenceMinuteOfHour: 10
+  restoreWindowDays: 2
+  copySettings:
+    - regionName: US_WEST_1
+      cloudProvider: AWS
+      shouldCopyOplogs: false
+      frequencies:
+        - WEEKLY
+  useOrgAndGroupNamesInExportPrefix: true
+  policy:
+    name: atlasbackuppolicy-sample
+

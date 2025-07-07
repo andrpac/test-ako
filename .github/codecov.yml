@@ -1,0 +1,51 @@
+comment: false
+
+github_checks:
+  annotations: false
+
+coverage:
+  status:
+    project:
+      default: false
+      operator:
+        paths:
+          - "!tests/"
+          - "!tools/"
+      tests:
+        paths: "test/"
+      tools:
+        paths: "tools/"
+
+component_management:
+  default_rules: # default rules that will be inherited by all components
+    statuses:
+      - type: project
+        target: auto
+        informational: true
+  individual_components:
+    - component_id: operator
+      name: operator
+      paths:
+        - "!tests/"
+        - "!tools/"
+      statuses:    
+        - type: project
+          threshold: -0.5   # Allow -0.5% regression in coverage
+          carryforward: false
+          target: auto
+          informational: true   
+        - type: patch
+    - component_id: test-helpers
+      name: test-helpers
+      paths:
+        - test/**
+    - component_id: tools
+      name: tools
+      paths:
+        - tools/**
+      statuses:
+        - type: project
+          target: auto
+          threshold: 5
+          informational: true
+        - type: patch

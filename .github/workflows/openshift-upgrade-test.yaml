@@ -1,0 +1,59 @@
+name: Upgrade test on Openshift
+on:
+  workflow_call:
+    inputs:
+      previousVersion:
+        description: "Previous operator release"
+        default: "1.0.0"
+        type: string
+        required: false
+      previousReleaseRegistry:
+        description: "Previous operator registry"
+        default: "quay.io/mongodb"
+        type: string
+        required: false
+      registryForNewRelease:
+        description: "Registry to push images of current build"
+        default: "quay.io/mongodb"
+        type: string
+        required: false
+  workflow_dispatch:
+concurrency:
+  group: test-openshift-operator-upgrade
+  cancel-in-progress: true
+jobs:
+  e2e-tests:
+    name: Upgrade test on Openshift
+    environment: openshift-test
+    runs-on: ubuntu-latest
+    if: ${{ vars.SKIP_OPENSHIFT != 'true' }}
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{github.event.pull_request.head.sha}}
+          fetch-depth: 0 # required for tags
+      - name: Prepare tag
+        id: prepare
+        uses: ./.github/actions/set-tag
+      - name: Install devbox
+        uses: jetify-com/devbox-install-action@v0.13.0
+        with:
+          enable-cache: 'true'
+      - name: Download tools for openshift test
+        run: |
+          wget https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/latest-4.9/opm-linux.tar.gz -O opm.tar.gz -q
+          tar xvf opm.tar.gz
+          chmod +x opm && sudo mv opm /usr/local/bin/opm
+          wget https://mirror.openshift.com/pub/openshift-v4/x86_64/clients/ocp/latest-4.6/openshift-client-linux.tar.gz -O openshift.tar.gz -q
+          tar xvf openshift.tar.gz
+          chmod +x oc && sudo mv oc /usr/local/bin/oc
+      - name: Login to registry
+        run: docker login -u="${{ secrets.OPENSHIFT_UPGRADE_BOT_USERNAME }}" -p="${{ secrets.OPENSHIFT_UPGRADE_BOT_PASSWORD }}" quay.io
+      - name: Run openshift upgrade test
+        run: devbox run -- 'cd scripts && ./openshift-upgrade-test.sh'
+        env:
+          OC_TOKEN: ${{ secrets.OPENSHIFT_UPGRADE_TOKEN }}
+          CLUSTER_API_URL: ${{ secrets.OPENSHIFT_UPGRADE_SERVER_API }}
+          LATEST_RELEASE_REGISTRY: ${{ github.event.inputs.previousReleaseRegistry }}
+          REGISTRY: ${{ github.event.inputs.registryForNewRelease }}

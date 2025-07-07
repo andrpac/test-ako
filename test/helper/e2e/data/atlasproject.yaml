@@ -1,0 +1,13 @@
+apiVersion: atlas.mongodb.com/v1
+kind: AtlasProject
+metadata:
+  name: my-project
+spec:
+  name: Test Atlas Operator Project
+  connectionSecretRef:
+    name: my-atlas-key
+  projectIpAccessList:
+    - cidrBlock: "0.0.0.0/1"
+      comment: "Everyone has access. For the test purpose only."
+    - cidrBlock: "128.0.0.0/1"
+      comment: "Everyone has access. For the test purpose only."

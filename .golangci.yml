@@ -1,0 +1,108 @@
+version: "2"
+linters:
+  default: none
+  enable:
+    - copyloopvar
+    - depguard
+    - dogsled
+    - dupl
+    - errcheck
+    - errorlint
+    - gocyclo
+    - goprintffuncname
+    - gosec
+    - govet
+    - importas
+    - ineffassign
+    - misspell
+    - noctx
+    - prealloc
+    - rowserrcheck
+    - staticcheck
+    - unconvert
+    - unparam
+    - unused
+    - whitespace
+  settings:
+    staticcheck:
+      checks:
+        - -QF1008 # produces false positives
+    depguard:
+      rules:
+        all:
+          deny:
+            - pkg: io/ioutil
+              desc: io/ioutil package has been deprecated
+    misspell:
+      locale: US
+  exclusions:
+    generated: lax
+    rules:
+      - linters:
+          - errcheck
+          - gochecknoglobals
+          - gocyclo
+          - nlreturn
+          - wrapcheck
+        path: test
+      - linters:
+          - gochecknoglobals
+          - wrapcheck
+        path: cmd/manager/main.go
+      - linters:
+          - noctx
+          - staticcheck
+        path: test/e2e
+      - linters:
+          - staticcheck
+        path: test/helper
+        text: 'ST1000:|ST1001:|ST1003:'
+      - linters:
+          - noctx
+        path: test/helper/e2e/appclient
+      - linters:
+          - dupl
+          - prealloc
+          - unparam
+        path: pkg/controller
+      - linters:
+          - prealloc
+        path: pkg/controller/atlasdatabaseuser/connectionsecrets
+      - linters:
+          - staticcheck
+        path: pkg/util/testutil/
+      - path: (.+)\.go$
+        text: Error return value of .((os\.)?std(out|err)\..*|.*Close|.*Flush|os\.Remove(All)?|.*print(f|ln)?|os\.(Un)?Setenv). is not checked
+      - path: (.+)\.go$
+        text: func name will be used as test\.Test.* by other packages, and that stutters; consider calling this
+      - path: (.+)\.go$
+        text: (possible misuse of unsafe.Pointer|should have signature)
+      - path: (.+)\.go$
+        text: Use of unsafe calls should be audited
+      - path: (.+)\.go$
+        text: Subprocess launch(ed with variable|ing should be audited)
+      - path: (.+)\.go$
+        text: (G104|G307)
+      - path: (.+)\.go$
+        text: at least one file in a package should have a package comment
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/mongodb/mongodb-atlas-kubernetes/v2
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

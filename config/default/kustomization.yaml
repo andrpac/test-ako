@@ -1,0 +1,4 @@
+# 'default' folder is always used by operator-sdk to generate CSV bundles - so we just point to
+# the prod configurations
+resources:
+- ../release/prod/allinone

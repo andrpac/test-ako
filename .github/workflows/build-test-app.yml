@@ -1,0 +1,40 @@
+name: Build test application and push it to repository
+
+on:
+  push:
+    paths:
+      - 'test/app/**'
+      - '!test/app/helm/**'
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-test-app:
+    name: Build test app and push it
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY: quay.io
+      REPOSITORY: mongodb/mongodb-atlas-kubernetes-operator-test-app
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Login to Quay registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: mongodb+mongodb_atlas_kubernetes
+          password: ${{ secrets.QUAY_PASSWORD }}
+      - name: Prepare docker image tag
+        id: prepare-docker-image-tag
+        run: |
+          TAGS="${{ env.REGISTRY }}/${{ env.REPOSITORY }}:latest"
+          echo "tags=$TAGS" >> $GITHUB_OUTPUT
+      - name: Push Image to repo
+        uses: docker/build-push-action@v6
+        with:
+          context: test/app
+          push: true
+          tags: ${{ steps.prepare-docker-image-tag.outputs.tags }}

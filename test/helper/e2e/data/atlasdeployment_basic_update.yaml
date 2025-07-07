@@ -1,0 +1,12 @@
+apiVersion: atlas.mongodb.com/v1
+kind: AtlasDeployment
+metadata:
+  name: atlas-deployment-basic
+spec:
+  projectRef:
+    name: my-project
+  flexSpec:
+    name: deployment-basic
+    providerSettings:
+      backingProviderName: AWS
+      regionName: US_EAST_1
