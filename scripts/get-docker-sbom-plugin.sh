@@ -29,3 +29,5 @@ curl -L "${url}" -o "${target}"
 tar zxvf "${target}" docker-sbom
 chmod +x docker-sbom
 ./docker-sbom
+
+sudo mv docker-sbom /usr/local/bin/docker-sbom
