@@ -28,4 +28,5 @@ url="${download_url_base}/v${version}/sbom-cli-plugin_${version}_${os}_${arch}.t
 curl -L "${url}" -o "${target}"
 tar zxvf "${target}" docker-sbom
 chmod +x docker-sbom
-./docker-sbom
+
+sudo mv docker-sbom /usr/local/bin/docker-sbom

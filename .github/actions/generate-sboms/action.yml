@@ -1,0 +1,26 @@
+name: Generate SBOMs
+description: Generates SBOMs for a given image version
+
+inputs:
+  version:
+    description: "Version of the image"
+    required: true
+  operator_repo:
+    description: "Image repo (e.g. ghcr.io/org/repo)"
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Cosign
+      uses: sigstore/cosign-installer@v3.8.2
+
+    - name: Generate SBOMs
+      shell: bash
+      run: |
+        OS=linux ARCH=amd64 DOCKER_SBOM_PLUGIN_VERSION=0.6.1 ./scripts/get-docker-sbom-plugin.sh
+        make generate-sboms
+        rm -f docker-sbom
+      env:
+        VERSION: ${{ inputs.version }}
+        RELEASED_OPERATOR_IMAGE: ${{ inputs.operator_repo }}
