@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# This scripts moves an image from a registry to another with retagging
+# This script moves an image from one registry to another with retagging.
 
 set -euo pipefail
 
@@ -26,12 +26,25 @@ set -euo pipefail
 image_src_url="${IMAGE_SRC_REPO}:${IMAGE_SRC_TAG}"
 image_dest_url="${IMAGE_DEST_REPO}:${IMAGE_DEST_TAG}"
 
+# Pull the source image if not already present locally
+if ! docker image inspect "${image_src_url}" > /dev/null 2>&1; then
+  echo "Pulling image ${image_src_url}..."
+  if ! docker pull "${image_src_url}" > /dev/null 2>&1; then
+    echo "Error: Failed to pull image '${image_src_url}'."
+    echo "The image '${IMAGE_SRC_REPO}' with tag '${IMAGE_SRC_TAG}' may not exist in the registry."
+    exit 1
+  fi
+else
+  echo "Image ${image_src_url} already present locally."
+fi
+
+# Check if the destination image already exists remotely
 echo "Checking if ${image_dest_url} already exists..."
 if docker manifest inspect "${image_dest_url}" > /dev/null 2>&1; then
   echo "${image_dest_url} already exists. Skipping push."
 else
   echo "Tagging ${image_src_url} -> ${image_dest_url}"
   docker tag "${image_src_url}" "${image_dest_url}"
-  echo "Pushing to ${image_dest_url}..."
+  echo "Pushing ${image_dest_url}..."
   docker push "${image_dest_url}"
 fi
