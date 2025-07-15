@@ -134,7 +134,7 @@ jobs:
         run: devbox run -- make gen-sdlc-checklist    
 
       - name: Commit and create pull request for release changes
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ steps.generate_token.outputs.token }}
           commit-message: "chore(release): updates from new release v${{ github.event.inputs.version }}"
