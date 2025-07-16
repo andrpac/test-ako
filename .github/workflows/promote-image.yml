@@ -14,9 +14,9 @@ jobs:
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'schedule'
     env:
-      GHCR_REPO: ghcr.io/mongodb/mongodb-atlas-kubernetes-operator-prerelease
-      DOCKER_REPO: docker.io/mongodb/mongodb-atlas-kubernetes-operator-prerelease
-      QUAY_REPO: quay.io/mongodb/mongodb-atlas-kubernetes-operator-prerelease
+      GHCR_REPO: ghcr.io/andrpac/mongodb-atlas-kubernetes-operator-prerelease
+      DOCKER_REPO: docker.io/andrpac/mongodb-atlas-kubernetes-operator-prerelease
+      QUAY_REPO: quay.io/andrpac/mongodb-atlas-kubernetes-operator-prerelease
     steps:
       - name: Checkout PR commit
         uses: actions/checkout@v4
