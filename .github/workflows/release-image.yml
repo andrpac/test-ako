@@ -67,7 +67,7 @@ jobs:
     environment: release
     needs: image2commit
     env:
-      VERSION: ${{ github.event.inputs.version || 'vtest-0.0.0-dev' }}
+      VERSION: ${{ github.event.inputs.version || 'v0.0.0-dev' }} # This marks the testing
       AUTHORS: ${{ github.event.inputs.authors || 'unknown' }}
       IMAGE_SHA: ${{ github.event.inputs.image_sha || 'latest' }}
       DOCKER_SIGNATURE_REPO: docker.io/andrpac/signatures
