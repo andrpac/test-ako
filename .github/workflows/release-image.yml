@@ -12,7 +12,7 @@ on:
         required: true
         type: string
       image_sha:
-        description: "7-digit commit SHA used for the promoted image (e.g. 3e79a3 or 'latest')"
+        description: "7-digit commit SHA used for the promoted image (e.g. 3e79a3f or 'latest')"
         required: false
         default: "latest"
         type: string
@@ -67,9 +67,9 @@ jobs:
     environment: release
     needs: image2commit
     env:
-      VERSION: ${{ github.event.inputs.version || 'v0.0.0-dev' }} # This marks the testing
-      AUTHORS: ${{ github.event.inputs.authors || 'unknown' }}
-      IMAGE_SHA: ${{ github.event.inputs.image_sha || 'latest' }}
+      VERSION: ${{ github.event.inputs.version }}
+      AUTHORS: ${{ github.event.inputs.authors }}
+      IMAGE_SHA: ${{ github.event.inputs.image_sha }}
       DOCKER_SIGNATURE_REPO: docker.io/andrpac/signatures
       DOCKER_RELEASE_REPO: docker.io/andrpac/mongodb-atlas-kubernetes-operator
       DOCKER_PRERELEASE_REPO: docker.io/andrpac/mongodb-atlas-kubernetes-operator-prerelease
@@ -81,7 +81,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ needs.image2commit.outputs.commit_sha }}
-      
+
       # Login in into all registries
       - name: Log in to Docker registry
         uses: docker/login-action@v3
@@ -154,7 +154,7 @@ jobs:
 
       - name: Bump Helm chart version
         run: devbox run -- ./scripts/bump-helm-chart-version.sh
-  
+
       - name: Generate SBOMs
         run: devbox run -- make generate-sboms RELEASED_OPERATOR_IMAGE="${{ env.DOCKER_RELEASE_REPO }}"
 
@@ -202,7 +202,7 @@ jobs:
       - name: Tag the release assets
         run: |
           git fetch --tags
-          git tag -f ${{ env.VERSION }}
+          git tag -f ${{ env.VERSION }} ${{ needs.image2commit.outputs.commit_sha }}
           git push -f origin ${{ env.VERSION }}
         
       - name: Create release on GitHub
