@@ -21,8 +21,8 @@ set -euo pipefail
 
 # Configuration defaults
 github_token=${GITHUB_TOKEN:?}
-repo_owner="${REPO_OWNER:-mongodb}"
-repo_name="${REPO_NAME:-mongodb-atlas-kubernetes}"
+repo_owner="${REPO_OWNER:-andrpac}"
+repo_name="${REPO_NAME:-test-ako}"
 branch="${BRANCH:?}"
 commit_message="${COMMIT_MESSAGE:?}"
 remote=${REMOTE:-origin}
