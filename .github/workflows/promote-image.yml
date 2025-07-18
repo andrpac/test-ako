@@ -1,18 +1,67 @@
 name: Promote Image
 
 on:
+  # Promotion will run with the schedule/nightly event
   workflow_run:
     workflows: ["Test"]
     types: [completed]
-
+  
+  # Promotion can be run manually/on-demand
+  workflow_dispatch:
+    inputs:
+      git_commit_sha:
+        description: "7-digit git commit SHA for which to generate the image (e.g. 3e79a3f or 'latest')"
+        required: false
+        default: "latest"
+        type: string
 jobs:
+  # Resolve-commit-sha: gives us the exact git commit we would need to checkout in the subsequent step
+  # Note, latest is not valid for checkout. Similarly, we should also fetch the latest commit for workflow_run.
+  resolve-commit-sha:
+      runs-on: ubuntu-latest
+      environment: release
+      # Note, events should only be allowed from main!
+      # -> schedule will only run from main
+      # -> workflow_dispatch should not be allowed to create promoted images from non-main branches
+      if: |
+        (
+          github.event.workflow_run.head_branch == 'main' &&
+          github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.event == 'schedule'
+        ) ||
+        (
+          github.ref == 'refs/heads/main' &&
+          github.event_name == 'workflow_dispatch'
+        )
+      outputs:
+        commit_sha: ${{ steps.resolve_commit.outputs.commit }}
+      steps:
+        - name: Checkout source
+          uses: actions/checkout@v4
+
+        - name: Resolve commit SHA
+          id: resolve_commit
+          env:
+            EVENT_NAME: ${{ github.event_name }}
+            INPUT_SHA: ${{ github.event.inputs.git_commit_sha }}
+            WORKFLOW_SHA: ${{ github.event.workflow_run.head_sha }}
+          run: |
+            echo "commit=$(
+              if [[ "$EVENT_NAME" == "workflow_run" ]]; then
+                echo "$WORKFLOW_SHA"
+              elif [[ "$INPUT_SHA" == "latest" ]]; then
+                git rev-parse HEAD
+              else
+                echo "$INPUT_SHA"
+              fi
+            )" >> "$GITHUB_OUTPUT"
+
+  # Promote image: this will be responbile for taking a tested image from an unofficial registry like
+  # ghcr.io and promote it by adding it to an official registry (docker.io and quay.io)
   promote-image:
     runs-on: ubuntu-latest
     environment: release
-    if: |
-      github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'schedule'
+    needs: resolve-commit-sha
     env:
       GHCR_REPO: ghcr.io/andrpac/mongodb-atlas-kubernetes-operator-prerelease
       DOCKER_REPO: docker.io/andrpac/mongodb-atlas-kubernetes-operator-prerelease
@@ -20,7 +69,10 @@ jobs:
     steps:
       - name: Checkout PR commit
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-commit-sha.outputs.commit_sha }}
       
+      # Login into all registries
       - name: Log in to the GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -42,6 +94,7 @@ jobs:
           username: ${{ secrets.QUAY_USERNAME }}
           password: ${{ secrets.QUAY_PASSWORD }}
 
+      # Prepare tags for images
       - name: Prepare image tag
         id: set_tag
         uses: ./.github/actions/set-tag
@@ -56,6 +109,8 @@ jobs:
           COMMIT_SHA="${RAW_TAG##*-}"
           echo "tag=promoted-${COMMIT_SHA}" >> $GITHUB_OUTPUT
 
+      # Promote the image to the registries
+      # Note, promoted-latest tag should only be used for schedule events
       - name: Move image to Docker Hub
         run: ./scripts/move-image.sh
         env:
@@ -63,7 +118,7 @@ jobs:
           IMAGE_DEST_REPO: ${{ env.DOCKER_REPO }}
           IMAGE_SRC_TAG: ${{ steps.set_tag.outputs.tag }}
           IMAGE_DEST_TAG: ${{ steps.promoted_tag.outputs.tag }}
-          ALIAS_ENABLED: true
+          ALIAS_ENABLED: ${{ github.event_name == 'workflow_run' }}
           ALIAS_TAG: promoted-latest
 
       - name: Move image to Quay
@@ -73,5 +128,5 @@ jobs:
           IMAGE_DEST_REPO: ${{ env.QUAY_REPO }}
           IMAGE_SRC_TAG: ${{ steps.set_tag.outputs.tag }}
           IMAGE_DEST_TAG: ${{ steps.promoted_tag.outputs.tag }}
-          ALIAS_ENABLED: true
+          ALIAS_ENABLED: ${{ github.event_name == 'workflow_run' }}
           ALIAS_TAG: promoted-latest

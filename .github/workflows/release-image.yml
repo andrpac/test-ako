@@ -157,8 +157,8 @@ jobs:
           export COMMIT_MESSAGE="feat: release ${VERSION}"
           export RELEASE_DIR="releases/${VERSION}"
 
-          git config --global user.name "andrpac"
-          git config --global user.email "andrei.pacurar@mongodb.com"
+          git config --global user.name "release-bot[bot]"
+          git config --global user.email "456789+release-bot[bot]@users.noreply.github.com"
 
           mkdir -p "$RELEASE_DIR"
           cp -r deploy "$RELEASE_DIR/deploy"
