@@ -6,6 +6,31 @@ on:
     types: [completed]
 
 jobs:
+  # Check-test-status: Uses the hook called test-status on the test.yml job in order to 
+  # see if any test failed or was skipped; promotion should only run when all tests suceeded!
+  check-test-status:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure test-status job completed
+        env:
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          jobs=$(gh api /repos/$REPO/actions/runs/$RUN_ID/jobs --jq '.jobs[] | select(.name == "Final Test Status")')
+
+          if [[ -z "$jobs" ]]; then
+            echo "test-status job not found"
+            exit 1
+          fi
+
+          conclusion=$(echo "$jobs" | jq -r '.conclusion')
+
+          if [[ "$conclusion" != "success" ]]; then
+            echo "test-status job did not succeed: $conclusion"
+            exit 1
+          fi
+
   promote-image:
     runs-on: ubuntu-latest
     environment: release
