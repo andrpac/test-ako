@@ -98,7 +98,6 @@ jobs:
     uses: ./.github/workflows/cloud-tests.yml
     secrets: inherit
 
-
   # Test-status: this is a hook for jobs that require all the tests to succeed like promote-image
   # in order to check the overall status of the tests (no test failed nor got skipped)
   test-status:
