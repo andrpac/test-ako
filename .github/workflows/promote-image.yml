@@ -37,7 +37,6 @@ jobs:
     environment: release
     needs: check-test-status
     if: |
-      github.event.workflow_run.head_branch == 'main' &&
       needs.check-test-status.outputs.test-status == 'success'
     env:
       GHCR_REPO: ghcr.io/andrpac/mongodb-atlas-kubernetes-operator-prerelease
@@ -47,6 +46,7 @@ jobs:
       - name: Checkout PR commit
         uses: actions/checkout@v4
       
+      # Login in all the needed registries
       - name: Log in to the GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -68,6 +68,7 @@ jobs:
           username: ${{ secrets.QUAY_USERNAME }}
           password: ${{ secrets.QUAY_PASSWORD }}
 
+      # Prepare tags
       - name: Prepare image tag
         id: set_tag
         uses: ./.github/actions/set-tag
@@ -82,6 +83,7 @@ jobs:
           COMMIT_SHA="${RAW_TAG##*-}"
           echo "tag=promoted-${COMMIT_SHA}" >> $GITHUB_OUTPUT
 
+      # Promote image to official prerelease registries
       - name: Move image to Docker Hub
         run: ./scripts/move-image.sh
         env:
@@ -89,7 +91,7 @@ jobs:
           IMAGE_DEST_REPO: ${{ env.DOCKER_REPO }}
           IMAGE_SRC_TAG: ${{ steps.set_tag.outputs.tag }}
           IMAGE_DEST_TAG: ${{ steps.promoted_tag.outputs.tag }}
-          ALIAS_ENABLED: true
+          ALIAS_ENABLED: ${{ github.event.workflow_run.head_branch == 'main' }}
           ALIAS_TAG: promoted-latest
 
       - name: Move image to Quay
@@ -99,5 +101,5 @@ jobs:
           IMAGE_DEST_REPO: ${{ env.QUAY_REPO }}
           IMAGE_SRC_TAG: ${{ steps.set_tag.outputs.tag }}
           IMAGE_DEST_TAG: ${{ steps.promoted_tag.outputs.tag }}
-          ALIAS_ENABLED: true
+          ALIAS_ENABLED: ${{ github.event.workflow_run.head_branch == 'main' }}
           ALIAS_TAG: promoted-latest
