@@ -7,10 +7,7 @@ jobs:
   unit-test:
     name: Unit tests
     runs-on: ubuntu-latest
-    steps:
-      - name: Fail deliberately
-        run: exit 1
-    
+    steps:    
       - uses: actions/checkout@v4
         with:
           ref: ${{github.event.pull_request.head.sha}}
