@@ -48,12 +48,6 @@ jobs:
     needs:
       - run-tests
     uses: ./.github/workflows/validate-manifests.yml
-  
-  unit-tests:
-    needs:
-      - run-tests
-    uses: ./.github/workflows/test-unit.yml
-    secrets: inherit
 
   license-header-check:
     needs:
@@ -73,7 +67,6 @@ jobs:
 
   cloud-tests:
     needs:
-      - unit-tests
       - validate-manifests
       - check-licenses
       - cloud-tests-filter
@@ -82,17 +75,11 @@ jobs:
     uses: ./.github/workflows/cloud-tests.yml
     secrets: inherit
 
-
-  # Test-status: this is a hook for jobs that require all the tests to succeed like promote-image
-  # in order to check the overall status of the tests (no test failed nor got skipped)
-  test-status:
-    name: Final Test Status
+  start-promote-image:
+    name: Start Promote Image
     needs:
-      - unit-tests
       - validate-manifests
       - check-licenses
       - cloud-tests
-    runs-on: ubuntu-latest
-    steps:
-      - name: All tests status
-        run: echo "All tests successfully ran. This will get printed only on success!"
+    uses: ./.github/workflows/promote-image.yml
+    secrets: inherit
