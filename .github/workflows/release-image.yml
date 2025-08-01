@@ -162,6 +162,7 @@ jobs:
           git config --global user.name "release-bot[bot]"
           git config --global user.email "456789+release-bot[bot]@users.noreply.github.com"
 
+          rm -rf "$RELEASE_DIR"
           mkdir -p "$RELEASE_DIR"
           cp -r deploy "$RELEASE_DIR/deploy"
           cp -r bundle "$RELEASE_DIR/bundle"
