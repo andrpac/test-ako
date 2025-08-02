@@ -46,12 +46,8 @@ cp -r helm-charts "$TMP_DIR/helm-charts"
 cp bundle.Dockerfile "$TMP_DIR/bundle.Dockerfile"
 
 git fetch origin
-
-if git rev-parse --verify "$BRANCH" >/dev/null 2>&1; then
-  git branch -D "$BRANCH"
-fi
-
 git checkout -B "$BRANCH" origin/main
+git push -f origin
 
 if [[ -d "$RELEASE_DIR" ]]; then
   echo "Cleaning up existing release dir: $RELEASE_DIR"
