@@ -13,97 +13,67 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# GitHub will sign commits if the API request is authenticated and lacks
-# author and committer arguments. See:
-# https://github.com/peter-evans/create-pull-request/issues/1241#issuecomment-1232477512
+# This script creates the release/<version> directory and opens a pull request. 
+# Since it may be invoked from an old commit in CI workflows, it first copies all
+# necessary release files into a temporary, unstaged directory. It then creates a
+# new branch from the latest main, removes any existing release/<version> directory
+# with a signed commit, and recreates it by copying in the contents from the temporary
+# location, followed by a second signed commit and a draft PR.
+
+# Note, it is important to save the files into a temporary directory before switching
+# to a new branch from the latest commit, since some directories required in the release
+# are already tracked by Git; if we switch branches first, Git will automatically update
+# those directories to their latest version on the target branch, rather than preserving
+# their state from the commit we want to release from.
 
 set -euo pipefail
 
-# Configuration defaults
-github_token=${GITHUB_TOKEN:?}
-repo_owner="${REPO_OWNER:-andrpac}"
-repo_name="${REPO_NAME:-test-ako}"
-branch="${BRANCH:?}"
-commit_message="${COMMIT_MESSAGE:?}"
-remote=${REMOTE:-origin}
+if [[ -z "${VERSION:-}" ]]; then
+  echo "Error: VERSION environment variable must be set."
+  exit 1
+fi
 
-# Ensure remote branch exists
-echo "Check remote branch ${branch} exists..."
+export BRANCH="new-release/${VERSION}"
+export RELEASE_DIR="releases/${VERSION}"
 
-function create_branch() {
-  echo "Creating branch ${remote}/${branch}"
-  git stash
-  git push "${remote}" "${branch}"
-  git stash pop
-  git add .
-}
+git config --global user.name "release-bot[bot]"
+git config --global user.email "456789+release-bot[bot]@users.noreply.github.com"
 
-git ls-remote --exit-code --heads origin "${branch}" >/dev/null || create_branch
+# Move content to a safe temporary location
+TMP_DIR="$(mktemp -d)"
+cp -r deploy "$TMP_DIR/deploy"
+cp -r bundle "$TMP_DIR/bundle"
+cp -r helm-charts "$TMP_DIR/helm-charts"
+cp bundle.Dockerfile "$TMP_DIR/bundle.Dockerfile"
 
-# Fetch the latest commit SHA
-LATEST_COMMIT_SHA=$(curl -s -H "Authorization: token $github_token" \
-  "https://api.github.com/repos/$repo_owner/$repo_name/git/ref/heads/$branch" | jq -r '.object.sha')
+# Checkout or create release branch
+git fetch origin
+git checkout -f -b "$BRANCH" origin/main
 
-LATEST_TREE_SHA=$(curl -s -H "Authorization: token $github_token" \
-  "https://api.github.com/repos/$repo_owner/$repo_name/git/commits/$LATEST_COMMIT_SHA" | jq -r '.tree.sha')
+# If release directory exists, remove it and commit (signed)
+if [[ -d "$RELEASE_DIR" ]]; then
+  echo "Directory $RELEASE_DIR exists — removing and creating signed cleanup commit"
+  git rm -rf "$RELEASE_DIR"
+  export COMMIT_MESSAGE="chore: remove ${RELEASE_DIR} to prepare for fresh release"
+  scripts/create-signed-commit.sh
+fi
 
-echo "Creating a signed commit in GitHub."
-echo "Latest commit SHA: $LATEST_COMMIT_SHA"  
-echo "Latest tree SHA: $LATEST_TREE_SHA"
+# Recreate release directory with new content
+mkdir -p "$RELEASE_DIR"
+cp -r "$TMP_DIR/deploy" "$RELEASE_DIR/deploy"
+cp -r "$TMP_DIR/bundle" "$RELEASE_DIR/bundle"
+cp -r "$TMP_DIR/helm-charts" "$RELEASE_DIR/helm-charts"
+cp "$TMP_DIR/bundle.Dockerfile" "$RELEASE_DIR/bundle.Dockerfile"
+rm -rf "$TMP_DIR"
 
-# Collect all modified files  
-MODIFIED_FILES=$(git diff --name-only --cached)  
-echo "Modified files: $MODIFIED_FILES"  
+git add -f "$RELEASE_DIR"
+export COMMIT_MESSAGE="feat: release ${VERSION}"
+scripts/create-signed-commit.sh
 
-# Create blob and tree  
-NEW_TREE_ARRAY="["  
-for FILE_PATH in $MODIFIED_FILES; do  
-  # Read file content encoded to base64  
-  ENCODED_CONTENT=$(base64 -w0 < "${FILE_PATH}")
-
-  # Create blob
-  echo "{\"content\": \"$ENCODED_CONTENT\", \"encoding\": \"base64\"}" > content.blob
-  BLOB_JSON=$(curl -s -X POST -H "Authorization: token $github_token" \
-    -H "Accept: application/vnd.github.v3+json" \
-    -d @content.blob \
-    "https://api.github.com/repos/$repo_owner/$repo_name/git/blobs")
-  BLOB_SHA=$(echo "${BLOB_JSON}" | jq -r '.sha')
-  rm content.blob
-
-  # Append file info to tree JSON  
-  NEW_TREE_ARRAY="${NEW_TREE_ARRAY}{\"path\": \"$FILE_PATH\", \"mode\": \"100644\", \"type\": \"blob\", \"sha\": \"$BLOB_SHA\"},"  
-done
-
-# Remove trailing comma and close the array  
-NEW_TREE_ARRAY="${NEW_TREE_ARRAY%,}]"
-
-# Create new tree
-echo "{\"base_tree\": \"$LATEST_TREE_SHA\", \"tree\": $NEW_TREE_ARRAY}" > new_tree_spec.json
-NEW_TREE_SHA=$(curl -s -X POST -H "Authorization: token $github_token" \
-  -H "Accept: application/vnd.github.v3+json" \
-  -d @new_tree_spec.json \
-  "https://api.github.com/repos/$repo_owner/$repo_name/git/trees" | jq -r '.sha')  
-rm new_tree_spec.json
-
-echo "New tree SHA: $NEW_TREE_SHA"  
-
-# Create a new commit
-NEW_COMMIT_SHA=$(curl -s -X POST -H "Authorization: token $github_token" \
-  -H "Accept: application/vnd.github.v3+json" \
-  -d "{\"message\": \"$commit_message\", \"tree\": \"$NEW_TREE_SHA\", \"parents\": [\"$LATEST_COMMIT_SHA\"]}" \
-  "https://api.github.com/repos/$repo_owner/$repo_name/git/commits" | jq -r '.sha')
-echo "New commit SHA: $NEW_COMMIT_SHA"  
-
-# Update the reference of the branch to point to the new commit
-curl -s -X PATCH -H "Authorization: token $github_token" \
-  -H "Accept: application/vnd.github.v3+json" -d "{\"sha\": \"$NEW_COMMIT_SHA\"}" \
-  "https://api.github.com/repos/$repo_owner/$repo_name/git/refs/heads/$branch"
-
-echo "Branch ${branch} updated to new commit ${NEW_COMMIT_SHA}."  
-git restore --staged .
-git restore .
-git clean -f
-git fetch "${remote}"
-git checkout -b "${branch}" "${remote}/${branch}" || git checkout "${branch}"
-
-echo "Local branch set to ${remote}/${branch}"
+git push -f origin "$BRANCH"
+gh pr create \
+  --draft \
+  --base main \
+  --head "$BRANCH" \
+  --title "$COMMIT_MESSAGE" \
+  --body "This is an autogenerated PR to prepare for the release"
