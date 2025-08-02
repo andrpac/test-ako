@@ -58,6 +58,11 @@ echo "Modified files: $MODIFIED_FILES"
 # Create blob and tree  
 NEW_TREE_ARRAY="["  
 for FILE_PATH in $MODIFIED_FILES; do  
+  if [[ ! -f "$FILE_PATH" ]]; then
+    echo "Skipping deleted file: $FILE_PATH"
+    continue
+  fi
+  
   # Read file content encoded to base64  
   ENCODED_CONTENT=$(base64 -w0 < "${FILE_PATH}")
 
