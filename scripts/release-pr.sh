@@ -13,6 +13,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# This script creates the release/<version> directory and opens a pull request. 
+# Since it may be invoked from an old commit in CI workflows, it first copies all
+# necessary release files into a temporary, unstaged directory. It then creates a
+# new branch from the latest main, removes any existing release/<version> directory
+#  with a signed commit, and recreates it by copying in the contents from the temporary
+# location, followed by a second signed commit and a draft PR.
+
+# Note, it is important to save the files into a temporary directory before switching
+# to a new branch from the latest commit, since some directories required in the release
+# are already tracked by Git; if we switch branches first, Git will automatically update
+# those directories to their latest version on the target branch, rather than preserving
+# their state from the commit we want to release from.
+
 set -euo pipefail
 
 if [[ -z "${VERSION:-}" ]]; then
@@ -21,24 +34,36 @@ if [[ -z "${VERSION:-}" ]]; then
 fi
 
 export BRANCH="new-release/${VERSION}"
-export COMMIT_MESSAGE="feat: release ${VERSION}"
 export RELEASE_DIR="releases/${VERSION}"
 
 git config --global user.name "release-bot[bot]"
 git config --global user.email "456789+release-bot[bot]@users.noreply.github.com"
 
-# Clean and prepare release directory
-mkdir -p "$RELEASE_DIR"
-cp -r deploy "$RELEASE_DIR/deploy"
-cp -r bundle "$RELEASE_DIR/bundle"
-cp -r helm-charts "$RELEASE_DIR/helm-charts"
-cp bundle.Dockerfile "$RELEASE_DIR/bundle.Dockerfile"
+TMP_DIR="$(mktemp -d)"
+cp -r deploy "$TMP_DIR/deploy"
+cp -r bundle "$TMP_DIR/bundle"
+cp -r helm-charts "$TMP_DIR/helm-charts"
+cp bundle.Dockerfile "$TMP_DIR/bundle.Dockerfile"
 
 git fetch origin
 git checkout -B "$BRANCH" origin/main
-git push -f origin "$BRANCH"
+
+if [[ -d "$RELEASE_DIR" ]]; then
+  echo "Cleaning up existing release dir: $RELEASE_DIR"
+  git rm -rf "$RELEASE_DIR"
+  export COMMIT_MESSAGE="chore: remove ${RELEASE_DIR} to prepare fresh release"
+  scripts/create-signed-commit.sh
+fi
+
+mkdir -p "$RELEASE_DIR"
+cp -r "$TMP_DIR/deploy" "$RELEASE_DIR/deploy"
+cp -r "$TMP_DIR/bundle" "$RELEASE_DIR/bundle"
+cp -r "$TMP_DIR/helm-charts" "$RELEASE_DIR/helm-charts"
+cp "$TMP_DIR/bundle.Dockerfile" "$RELEASE_DIR/bundle.Dockerfile"
+rm -rf "$TMP_DIR"
 
 git add -f "$RELEASE_DIR"
+export COMMIT_MESSAGE="feat: release ${VERSION}"
 scripts/create-signed-commit.sh
 
 gh pr create \
