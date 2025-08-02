@@ -53,7 +53,8 @@ echo "Branch pushed to remote"
 
 if [[ -d "$RELEASE_DIR" ]]; then
   echo "Cleaning up existing release dir: $RELEASE_DIR"
-  git rm -rf "$RELEASE_DIR"
+  git rm -rf --cached "$RELEASE_DIR"
+  rm -rf "$RELEASE_DIR" 
   export COMMIT_MESSAGE="chore: remove ${RELEASE_DIR} to prepare fresh release"
   scripts/create-signed-commit.sh
 fi
