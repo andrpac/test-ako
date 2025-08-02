@@ -15,7 +15,6 @@
 
 set -euo pipefail
 
-# Ensure VERSION is provided
 if [[ -z "${VERSION:-}" ]]; then
   echo "Error: VERSION environment variable must be set."
   exit 1
@@ -25,28 +24,23 @@ export BRANCH="new-release/${VERSION}"
 export COMMIT_MESSAGE="feat: release ${VERSION}"
 export RELEASE_DIR="releases/${VERSION}"
 
-# Git identity setup
 git config --global user.name "release-bot[bot]"
 git config --global user.email "456789+release-bot[bot]@users.noreply.github.com"
 
 # Clean and prepare release directory
-rm -rf "$RELEASE_DIR"
 mkdir -p "$RELEASE_DIR"
 cp -r deploy "$RELEASE_DIR/deploy"
 cp -r bundle "$RELEASE_DIR/bundle"
 cp -r helm-charts "$RELEASE_DIR/helm-charts"
 cp bundle.Dockerfile "$RELEASE_DIR/bundle.Dockerfile"
 
-# Git branch setup
 git fetch origin
-git checkout -f -b "$BRANCH" origin/main
+git checkout -B "$BRANCH" origin/main
 git push -f origin "$BRANCH"
 
-# Add files and sign commit
 git add -f "$RELEASE_DIR"
 scripts/create-signed-commit.sh
 
-# Create draft PR
 gh pr create \
   --draft \
   --base main \
