@@ -63,10 +63,7 @@ echo "Contents of TMP_DIR before deletion:"
 ls -R "$TMP_DIR"
 
 mkdir -p "$RELEASE_DIR"
-cp -r "$TMP_DIR/deploy" "$RELEASE_DIR/deploy"
-cp -r "$TMP_DIR/bundle" "$RELEASE_DIR/bundle"
-cp -r "$TMP_DIR/helm-charts" "$RELEASE_DIR/helm-charts"
-cp "$TMP_DIR/bundle.Dockerfile" "$RELEASE_DIR/bundle.Dockerfile"
+cp -r "$TMP_DIR/"* "$RELEASE_DIR"
 rm -rf "$TMP_DIR"
 
 git add -f "$RELEASE_DIR"
