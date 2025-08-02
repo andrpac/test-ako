@@ -103,9 +103,12 @@ jobs:
           username: ${{ secrets.QUAY_USERNAME }}
           password: ${{ secrets.QUAY_PASSWORD }}
 
+      - name: Install devbox
+        uses: jetify-com/devbox-install-action@v0.13.0
+
       # Move prerelease images to official release registries in Docker Hub and Quay 
       - name: Move image to Docker registry release from prerelease
-        run: ./scripts/move-image.sh
+        run: devbox run -- ./scripts/move-image.sh
         env:
           IMAGE_SRC_REPO: ${{ env.DOCKER_PRERELEASE_REPO }}
           IMAGE_DEST_REPO: ${{ env.DOCKER_RELEASE_REPO }}
@@ -113,7 +116,7 @@ jobs:
           IMAGE_DEST_TAG: ${{ env.RELEASE_TAG }}
 
       - name: Move image to Quay registry release from prerelease
-        run: ./scripts/move-image.sh
+        run: devbox run -- ./scripts/move-image.sh
         env:
           IMAGE_SRC_REPO: ${{ env.QUAY_PRERELEASE_REPO }}
           IMAGE_DEST_REPO: ${{ env.QUAY_RELEASE_REPO }}
@@ -122,7 +125,7 @@ jobs:
 
       # Create Openshift certified images 
       - name: Create OpenShift certified image on Quay
-        run: ./scripts/move-image.sh
+        run: devbox run -- ./scripts/move-image.sh
         env:
           IMAGE_SRC_REPO: ${{ env.QUAY_PRERELEASE_REPO }}
           IMAGE_DEST_REPO: ${{ env.QUAY_RELEASE_REPO }}
@@ -136,8 +139,16 @@ jobs:
           ENV: prod
           IMAGE_URL: ${{ env.DOCKER_IMAGE_URL }}
 
+      - name: Bump Helm chart version
+        run: devbox run -- ./scripts/bump-helm-chart-version.sh
+
+      # Prepare SDLC requirement: signatures, sboms, compliance reports
+      # Note, signed images will live in mongodb/release and mongodb/signature repos
+      - name: Generate SBOMs
+        run: devbox run -- make generate-sboms RELEASED_OPERATOR_IMAGE="${{ env.DOCKER_RELEASE_REPO }}"
+
       - name: Create SDLC report
-        run: make gen-sdlc-checklist 
+        run: devbox run -- make gen-sdlc-checklist 
 
       # Create PR on release branch with all updates generated
       - name: Create release PR with release directory
