@@ -45,6 +45,9 @@ cp -r bundle "$TMP_DIR/bundle"
 cp -r helm-charts "$TMP_DIR/helm-charts"
 cp bundle.Dockerfile "$TMP_DIR/bundle.Dockerfile"
 
+echo "Contents of TMP_DIR before deletion:"
+ls -R "$TMP_DIR"
+
 git fetch origin
 git checkout -B "$BRANCH" origin/main
 git push -f origin "$BRANCH"
@@ -55,6 +58,9 @@ if [[ -d "$RELEASE_DIR" ]]; then
   export COMMIT_MESSAGE="chore: remove ${RELEASE_DIR} to prepare fresh release"
   scripts/create-signed-commit.sh
 fi
+
+echo "Contents of TMP_DIR before deletion:"
+ls -R "$TMP_DIR"
 
 mkdir -p "$RELEASE_DIR"
 cp -r "$TMP_DIR/deploy" "$RELEASE_DIR/deploy"
