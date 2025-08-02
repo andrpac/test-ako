@@ -66,6 +66,8 @@ cp "$TMP_DIR/bundle.Dockerfile" "$RELEASE_DIR/bundle.Dockerfile"
 rm -rf "$TMP_DIR"
 
 git add -f "$RELEASE_DIR"
+
+echo "Ready to commit"
 export COMMIT_MESSAGE="feat: release ${VERSION}"
 scripts/create-signed-commit.sh
 
