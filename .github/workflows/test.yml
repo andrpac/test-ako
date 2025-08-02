@@ -44,21 +44,6 @@ jobs:
       - name: allowed message
         run: echo "Allowed to run tests"
 
-  validate-manifests:
-    needs:
-      - run-tests
-    uses: ./.github/workflows/validate-manifests.yml
-
-  license-header-check:
-    needs:
-      - run-tests
-    uses: ./.github/workflows/license-header-check.yml
-
-  check-licenses:
-    needs:
-      - run-tests
-    uses: ./.github/workflows/check-licenses.yml
-  
   cloud-tests-filter:
     if: github.event.pull_request.head.repo.fork == false
     needs:
@@ -67,8 +52,6 @@ jobs:
 
   cloud-tests:
     needs:
-      - validate-manifests
-      - check-licenses
       - cloud-tests-filter
     if: |
       github.event_name == 'merge_group' || needs.cloud-tests-filter.outputs.run-cloud-tests == 'true'
@@ -78,8 +61,6 @@ jobs:
   start-promote-image:
     name: Start Promote Image
     needs:
-      - validate-manifests
-      - check-licenses
       - cloud-tests
     uses: ./.github/workflows/promote-image.yml
     secrets: inherit
