@@ -49,6 +49,8 @@ git fetch origin
 git checkout -B "$BRANCH" origin/main
 git push -f origin
 
+echo "Branch pushed to remote"
+
 if [[ -d "$RELEASE_DIR" ]]; then
   echo "Cleaning up existing release dir: $RELEASE_DIR"
   git rm -rf "$RELEASE_DIR"
