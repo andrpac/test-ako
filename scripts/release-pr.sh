@@ -47,7 +47,6 @@ cp bundle.Dockerfile "$TMP_DIR/bundle.Dockerfile"
 
 git fetch origin
 git checkout -B "$BRANCH" origin/main
-git push -f origin
 
 echo "Branch pushed to remote"
 
