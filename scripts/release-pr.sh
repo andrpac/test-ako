@@ -52,9 +52,9 @@ git push -f origin "$BRANCH"
 if [[ -d "$RELEASE_DIR" ]]; then
   echo "Cleaning up existing release dir: $RELEASE_DIR"
   git rm -rf "$RELEASE_DIR"
-  export COMMIT_MESSAGE="chore: remove ${RELEASE_DIR} to prepare fresh release"
-  scripts/create-signed-commit.sh
-  git push -f origin "$BRANCH"
+#   export COMMIT_MESSAGE="chore: remove ${RELEASE_DIR} to prepare fresh release"
+#   scripts/create-signed-commit.sh
+#   git push -f origin "$BRANCH"
 fi
 
 mkdir -p "$RELEASE_DIR"
