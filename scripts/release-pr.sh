@@ -45,9 +45,6 @@ cp -r bundle "$TMP_DIR"
 cp -r helm-charts "$TMP_DIR"
 cp bundle.Dockerfile "$TMP_DIR"
 
-echo "Contents of TMP_DIR before deletion:"
-ls -R "$TMP_DIR"
-
 git fetch origin
 git checkout -B "$BRANCH" origin/main
 git push -f origin "$BRANCH"
@@ -59,12 +56,16 @@ if [[ -d "$RELEASE_DIR" ]]; then
   scripts/create-signed-commit.sh
 fi
 
-echo "Contents of TMP_DIR before deletion:"
-ls -R "$TMP_DIR"
-
 mkdir -p "$RELEASE_DIR"
-cp -r "$TMP_DIR/"* "$RELEASE_DIR"
+
+echo "Contents of TMP_DIR before deletion:"
+ls -R "$RELEASE_DIR"
+
+cp -r "$TMP_DIR/*" "$RELEASE_DIR"
 rm -rf "$TMP_DIR"
+
+echo "Contents of TMP_DIR before deletion:"
+ls -R "$RELEASE_DIR"
 
 git add -f "$RELEASE_DIR"
 export COMMIT_MESSAGE="feat: release ${VERSION}"
