@@ -61,7 +61,7 @@ mkdir -p "$RELEASE_DIR"
 echo "Contents of TMP_DIR before deletion:"
 ls -R "$RELEASE_DIR"
 
-cp -r "$TMP_DIR/*" "$RELEASE_DIR"
+cp -r "$TMP_DIR"/* "$RELEASE_DIR"
 rm -rf "$TMP_DIR"
 
 echo "Contents of TMP_DIR before deletion:"
