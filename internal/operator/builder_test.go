@@ -40,6 +40,7 @@ import (
 	akov2 "github.com/mongodb/mongodb-atlas-kubernetes/v2/api/v1"
 	"github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/featureflags"
 	"github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/mocks/atlas"
+	corev1 "k8s.io/api/core/v1"
 )
 
 type managerMock struct {
@@ -161,6 +162,7 @@ func TestBuildManager(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			akoScheme := runtime.NewScheme()
 			require.NoError(t, akov2.AddToScheme(akoScheme))
+			require.NoError(t, corev1.AddToScheme(akoScheme))
 
 			mgrMock := &managerMock{}
 			builder := NewBuilder(mgrMock, akoScheme, 5*time.Minute)
