@@ -2,7 +2,7 @@ name: Test
 
 on:
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: '*/20 * * * *'
   push:
     branches:
       - 'main'
@@ -62,5 +62,6 @@ jobs:
     name: Start Promote Image
     needs:
       - cloud-tests
+    if: github.ref_name == 'main'
     uses: ./.github/workflows/promote-image.yml
     secrets: inherit
