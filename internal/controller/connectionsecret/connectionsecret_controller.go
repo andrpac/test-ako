@@ -39,8 +39,8 @@ import (
 	"github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/controller/reconciler"
 	"github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/controller/workflow"
 	"github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/indexer"
-	"github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/kube"
 	"github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/pointer"
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/stringutil"
 	"github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/translation/project"
 	"github.com/mongodb/mongodb-atlas-kubernetes/v2/pkg/ratelimit"
 )
@@ -52,65 +52,30 @@ type ConnectionSecretReconciler struct {
 }
 
 func (r *ConnectionSecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	ids, err := ExtractIdentifiers(ctx, r.Client, req.NamespacedName)
+	// Parses the request name and fills up the identifiers: ProjectID, ClusterName, DatabaseUsername
+	ids, err := LoadRequestNameParts(ctx, r.Client, req.NamespacedName)
 	if err != nil {
-		r.Log.Errorw("Failed to extract identifiers", "error", err)
+		r.Log.Errorw("Failed to parse request name", "error", err)
 		return workflow.Terminate("InvalidConnectionSecretName", err).ReconcileResult()
 	}
 
-	compositeCluster := ids.ProjectID + "-" + ids.ClusterName
-	compositeUser := ids.ProjectID + "-" + ids.DatabaseUsername
+	// Loads the pair of AtlasDeployment and AtlasDatabaseUser via the indexers
+	pair, err := LoadPairedResources(ctx, r.Client, ids, req.Namespace)
+	if err != nil {
+		r.Log.Errorw("Failed to fetch deployment and user", "error", err)
+		return workflow.Terminate("InvalidConnectionResources", err).ReconcileResult()
+	}
 
-	deployments := &akov2.AtlasDeploymentList{}
-	if err := r.Client.List(ctx, deployments, &client.ListOptions{
-		FieldSelector: fields.OneTermEqualSelector(indexer.AtlasDeploymentBySpecNameAndProjectID, compositeCluster),
-		Namespace:     req.Namespace,
-	}); err != nil {
-		r.Log.Errorw("Failed to list AtlasDeployments", "error", err)
-		return workflow.Terminate("FailedToListDeployments", err).ReconcileResult()
-	}
-	if len(deployments.Items) != 1 {
-		err := fmt.Errorf("expected 1 AtlasDeployment for %q, found %d", compositeCluster, len(deployments.Items))
-		r.Log.Errorw(err.Error())
-		return workflow.Terminate("NonUniqueAtlasDeployment", err).ReconcileResult()
-	}
-	deployment := &deployments.Items[0]
-
-	users := &akov2.AtlasDatabaseUserList{}
-	if err := r.Client.List(ctx, users, &client.ListOptions{
-		FieldSelector: fields.OneTermEqualSelector(indexer.AtlasDatabaseUserBySpecUsernameAndProjectID, compositeUser),
-		Namespace:     req.Namespace,
-	}); err != nil {
-		r.Log.Errorw("Failed to list AtlasDatabaseUsers", "error", err)
-		return workflow.Terminate("FailedToListDatabaseUsers", err).ReconcileResult()
-	}
-	if len(users.Items) != 1 {
-		err := fmt.Errorf("expected 1 AtlasDatabaseUser for %q, found %d", compositeUser, len(users.Items))
-		r.Log.Errorw(err.Error())
-		return workflow.Terminate("NonUniqueAtlasDatabaseUser", err).ReconcileResult()
-	}
-	user := &users.Items[0]
-
-	// Check readiness of associated resources and requeue if not ready
-	if !IsDeploymentReady(deployment) || !IsDatabaseUserReady(user) {
-		notReady := []string{} // Identify which resource(s) are not ready for logging/debugging purposes
-		if !IsDeploymentReady(deployment) {
-			notReady = append(notReady, fmt.Sprintf("AtlasDeployment/%s", deployment.GetName()))
-		}
-		if !IsDatabaseUserReady(user) {
-			notReady = append(notReady, fmt.Sprintf("AtlasDatabaseUser/%s", user.GetName()))
-		}
+	// Checks is the pair is ready
+	if ready, notReady := pair.AreResourcesReady(); !ready {
 		return workflow.InProgress("ConnectionSecretNotReady", fmt.Sprintf("Not ready: %s", strings.Join(notReady, ", "))).ReconcileResult()
 	}
 
-	// Resolve ProjectName if missing
+	// Check if we have a ProjectName which is required for the K8s naming format
 	if ids.ProjectName == "" {
-		hasExternalRefDeployment := (deployment.Spec.ExternalProjectRef != nil && deployment.Spec.ExternalProjectRef.ID != "")
-		hasExternalRefUser := (user.Spec.ExternalProjectRef != nil && user.Spec.ExternalProjectRef.ID != "")
-
-		// If both have externalRef, use Atlas SDK to retrieve AtlasProject
-		if hasExternalRefDeployment && hasExternalRefUser {
-			connectionConfig, err := r.ResolveConnectionConfig(ctx, deployment)
+		// If both AtlasDeployment and AtlasDatabaseUser use externalRef, resolve via SDK
+		if pair.NeedsSDKProjectResolution() {
+			connectionConfig, err := r.ResolveConnectionConfig(ctx, pair.Deployment)
 			if err != nil {
 				r.Log.Errorw("Failed to resolve Atlas connection config", "error", err)
 				return workflow.Terminate("FailedToResolveConnectionConfig", err).ReconcileResult()
@@ -123,53 +88,40 @@ func (r *ConnectionSecretReconciler) Reconcile(ctx context.Context, req ctrl.Req
 			}
 
 			projectService := project.NewProjectAPIService(sdkClientSet.SdkClient20250312002.ProjectsApi)
-			atlasProject, err := projectService.GetProject(ctx, ids.ProjectID)
+			err = pair.ResolveProjectNameSDK(ctx, projectService)
 			if err != nil {
 				r.Log.Errorw("Failed to fetch project from Atlas API", "projectID", ids.ProjectID, "error", err)
 				return workflow.Terminate("FailedToFetchProjectFromAtlas", err).ReconcileResult()
 			}
-
-			ids.ProjectName = kube.NormalizeIdentifier(atlasProject.Name)
-		} else if !hasExternalRefDeployment {
-			project := &akov2.AtlasProject{}
-			if err := r.Client.Get(ctx, types.NamespacedName{
-				Namespace: req.Namespace,
-				Name:      deployment.Spec.ProjectRef.Name,
-			}, project); err != nil {
+		} else { // Otherwise, fetch AtlasProject from K8s
+			err = pair.ResolveProjectNameK8s(ctx, r.Client, req.Namespace)
+			if err != nil {
 				r.Log.Errorw("Failed to retrieve AtlasProject to resolve ProjectName", "projectID", ids.ProjectID, "error", err)
 				return workflow.Terminate("FailedToResolveProjectName", err).ReconcileResult()
 			}
-			ids.ProjectName = kube.NormalizeIdentifier(project.Spec.Name)
-		} else {
-			project := &akov2.AtlasProject{}
-			if err := r.Client.Get(ctx, types.NamespacedName{
-				Namespace: req.Namespace,
-				Name:      user.Spec.ProjectRef.Name,
-			}, project); err != nil {
-				r.Log.Errorw("Failed to retrieve AtlasProject to resolve ProjectName", "projectID", ids.ProjectID, "error", err)
-				return workflow.Terminate("FailedToResolveProjectName", err).ReconcileResult()
-			}
-			ids.ProjectName = kube.NormalizeIdentifier(project.Spec.Name)
 		}
 	}
 
-	connectionSecretK8sName := IdentifierToK8sFormat(ids)
+	// Retrives the connection data
+	data, err := pair.BuildConnectionData(ctx, r.Client)
+	if err != nil {
+		r.Log.Errorw("Failed to build connection data", "error", err)
+		return workflow.Terminate("FailedToBuildConnectionData", err).ReconcileResult()
+	}
 
-	r.Log.Infow("Resolved ConnectionSecret",
-		"namespace", req.Namespace,
-		"name", req.Name,
-		"k8sSecretName", connectionSecretK8sName,
-	)
+	// Creates or Updates the connection secret
+	if err := pair.HandleSecret(ctx, r.Client, data); err != nil {
+		r.Log.Errorw("Failed to create or update connection Secret", "error", err)
+		return workflow.Terminate("FailedToEnsureConnectionSecret", err).ReconcileResult()
+	}
 
 	r.Log.Infow("Successfully found associated resources",
-		"deployment", deployment.GetDeploymentName(),
-		"user", user.Spec.Username,
+		"deployment", pair.Deployment.GetDeploymentName(),
+		"user", pair.User.Spec.Username,
 		"projectID", ids.ProjectID,
 	)
 
-	return reconcile.Result{
-		RequeueAfter: 30 * time.Second,
-	}, nil
+	return reconcile.Result{RequeueAfter: 30 * time.Second}, nil
 }
 
 func (r *ConnectionSecretReconciler) DeploymentReadyPredicate() predicate.Predicate {
@@ -215,7 +167,8 @@ func (r *ConnectionSecretReconciler) SetupWithManager(mgr ctrl.Manager, skipName
 		).
 		WithOptions(controller.TypedOptions[reconcile.Request]{
 			RateLimiter:        ratelimit.NewRateLimiter[reconcile.Request](),
-			SkipNameValidation: pointer.MakePtr(skipNameValidation)}).
+			SkipNameValidation: pointer.MakePtr(skipNameValidation),
+		}).
 		Complete(r)
 }
 
@@ -225,23 +178,22 @@ func (r *ConnectionSecretReconciler) generateConnectionSecretRequests(
 	users []akov2.AtlasDatabaseUser,
 ) []reconcile.Request {
 	var requests []reconcile.Request
-
 	for _, d := range deployments {
 		for _, u := range users {
-			ids := Identifiers{
-				ProjectID:        projectID,
-				ClusterName:      kube.NormalizeIdentifier(d.GetDeploymentName()),
-				DatabaseUsername: kube.NormalizeIdentifier(u.Spec.Username),
+			scopes := u.GetScopes(akov2.DeploymentScopeType)
+			if len(scopes) != 0 && !stringutil.Contains(scopes, d.GetDeploymentName()) {
+				continue
 			}
+
+			requestName := CreateInternalFormat(projectID, d.GetDeploymentName(), u.Spec.Username)
 			requests = append(requests, reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Namespace: u.Namespace,
-					Name:      IdentifiersToInternalFormat(ids),
+					Name:      requestName,
 				},
 			})
 		}
 	}
-
 	return requests
 }
 
