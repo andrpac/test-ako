@@ -16,7 +16,6 @@ package connectionsecret
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -105,7 +104,7 @@ func TestCreateInternalFormat(t *testing.T) {
 	}
 }
 
-func TestLoadRequestNameParts(t *testing.T) {
+func TestLoadRequestIdentifiers(t *testing.T) {
 	scheme := runtime.NewScheme()
 	utilruntime.Must(corev1.AddToScheme(scheme))
 
@@ -126,13 +125,23 @@ func TestLoadRequestNameParts(t *testing.T) {
 			Labels:    map[string]string{},
 		},
 	}
-	secretEmptyLabel := &corev1.Secret{
+	secretEmptyProject := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "emptylabel-mycluster-admin",
+			Name:      "emptyproject-mycluster-admin",
 			Namespace: "default",
 			Labels: map[string]string{
 				ProjectLabelKey: "",
 				ClusterLabelKey: "mycluster",
+			},
+		},
+	}
+	secretEmptyCluster := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "myproj--admin",
+			Namespace: "default",
+			Labels: map[string]string{
+				ProjectLabelKey: "proj123",
+				ClusterLabelKey: "",
 			},
 		},
 	}
@@ -162,91 +171,93 @@ func TestLoadRequestNameParts(t *testing.T) {
 		WithObjects(
 			secretValid,
 			secretMissingLabels,
-			secretEmptyLabel,
+			secretEmptyProject,
+			secretEmptyCluster,
 			secretBadSplit,
 			secretInvalidSep,
 		).
 		Build()
 
 	tests := map[string]struct {
-		name      string
-		namespace string
-		expected  RequestNameParts
-		errSubstr string
+		name        string
+		namespace   string
+		expected    ConnSecretIdentifiers
+		expectedErr error
 	}{
 		"valid internal format": {
 			name: "proj123$mycluster$admin",
-			expected: RequestNameParts{
+			expected: ConnSecretIdentifiers{
 				ProjectID:        "proj123",
 				ClusterName:      "mycluster",
 				DatabaseUsername: "admin",
 			},
 		},
 		"internal format with too few parts": {
-			name:      "proj123$clusterOnly",
-			errSubstr: "expected 3 parts",
+			name:        "proj123$clusterOnly",
+			expectedErr: ErrInternalFormatPartsInvalid,
 		},
 		"internal format with empty part": {
-			name:      "proj123$$admin",
-			errSubstr: "empty value in one or more parts",
+			name:        "proj123$$admin",
+			expectedErr: ErrInternalFormatPartEmpty,
 		},
 		"valid k8s format": {
 			name:      "myproj-mycluster-admin",
 			namespace: "default",
-			expected: RequestNameParts{
+			expected: ConnSecretIdentifiers{
 				ProjectID:        "proj123",
 				ProjectName:      "myproj",
 				ClusterName:      "mycluster",
 				DatabaseUsername: "admin",
 			},
 		},
-		"k8s format with missing secret": {
-			name:      "nonexistent-secret",
-			namespace: "default",
-			errSubstr: "unable to retrieve Secret",
-		},
 		"k8s format with missing labels": {
-			name:      "missing-mycluster-admin",
-			namespace: "default",
-			errSubstr: "missing required label",
+			name:        "missing-mycluster-admin",
+			namespace:   "default",
+			expectedErr: ErrK8sLabelsMissing,
 		},
-		"k8s format with empty label value": {
-			name:      "emptylabel-mycluster-admin",
-			namespace: "default",
-			errSubstr: "has empty value for label",
+		"k8s format with empty project label": {
+			name:        "emptyproject-mycluster-admin",
+			namespace:   "default",
+			expectedErr: ErrK8sLabelEmpty,
+		},
+		"k8s format with empty cluster label": {
+			name:        "myproj--admin",
+			namespace:   "default",
+			expectedErr: ErrK8sLabelEmpty,
 		},
 		"k8s format with invalid name separator": {
-			name:      "invalid-separator",
-			namespace: "default",
-			errSubstr: "expected separator",
+			name:        "invalid-separator",
+			namespace:   "default",
+			expectedErr: ErrK8sNameSplitInvalid,
 		},
 		"k8s format with empty value after split": {
-			name:      "-mycluster-admin",
-			namespace: "default",
-			errSubstr: "empty value in one or more parts",
+			name:        "-mycluster-admin",
+			namespace:   "default",
+			expectedErr: ErrK8sNameSplitEmpty,
 		},
 	}
 
-	for testName, tc := range tests {
-		t.Run(testName, func(t *testing.T) {
-			ids, err := LoadRequestNameParts(context.Background(), client, types.NamespacedName{
-				Name:      tc.name,
-				Namespace: tc.namespace,
-			})
+	for tn, tc := range tests {
+		t.Run(tn, func(t *testing.T) {
+			ids, err := LoadRequestIdentifiers(
+				context.Background(),
+				client,
+				types.NamespacedName{Name: tc.name, Namespace: tc.namespace},
+			)
 
-			if tc.errSubstr != "" {
-				assert.Error(t, err)
-				assert.Contains(t, err.Error(), tc.errSubstr)
-			} else {
-				assert.NoError(t, err)
-				assert.Equal(t, tc.expected, ids)
+			if tc.expectedErr != nil {
+				assert.ErrorIs(t, err, tc.expectedErr)
+				return
 			}
+
+			assert.NoError(t, err)
+			assert.Equal(t, tc.expected, ids)
 		})
 	}
 }
 
 func TestPair_NeedsSDKProjectResolution(t *testing.T) {
-	p := &ConnectionPair{
+	p := &ConnSecretPair{
 		Deployment: &akov2.AtlasDeployment{
 			Spec: akov2.AtlasDeploymentSpec{
 				ProjectDualReference: akov2.ProjectDualReference{
@@ -261,6 +272,7 @@ func TestPair_NeedsSDKProjectResolution(t *testing.T) {
 				},
 			},
 		},
+		ProjectID: "abc",
 	}
 	assert.True(t, p.NeedsSDKProjectResolution())
 
@@ -268,9 +280,9 @@ func TestPair_NeedsSDKProjectResolution(t *testing.T) {
 	assert.False(t, p.NeedsSDKProjectResolution())
 }
 
-func TestPair_AreResourcesReady(t *testing.T) {
+func TestPair_IsReady(t *testing.T) {
 	t.Run("Both ready", func(t *testing.T) {
-		p := &ConnectionPair{
+		p := &ConnSecretPair{
 			Deployment: &akov2.AtlasDeployment{
 				ObjectMeta: metav1.ObjectMeta{Name: "dep"},
 				Status: status.AtlasDeploymentStatus{
@@ -287,14 +299,15 @@ func TestPair_AreResourcesReady(t *testing.T) {
 					},
 				},
 			},
+			ProjectID: "proj123",
 		}
-		ok, notReady := p.AreResourcesReady()
+		ok, notReady := p.IsReady()
 		assert.True(t, ok)
 		assert.Empty(t, notReady)
 	})
 
 	t.Run("One not ready", func(t *testing.T) {
-		p := &ConnectionPair{
+		p := &ConnSecretPair{
 			Deployment: &akov2.AtlasDeployment{
 				ObjectMeta: metav1.ObjectMeta{Name: "dep"},
 				Status: status.AtlasDeploymentStatus{
@@ -307,18 +320,20 @@ func TestPair_AreResourcesReady(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: "user"},
 				Status: status.AtlasDatabaseUserStatus{
 					Common: api.Common{
+						// Intentionally not ReadyType to simulate "not ready"
 						Conditions: []api.Condition{{Type: api.DatabaseUserReadyType, Status: corev1.ConditionTrue}},
 					},
 				},
 			},
+			ProjectID: "proj123",
 		}
-		ok, notReady := p.AreResourcesReady()
+		ok, notReady := p.IsReady()
 		assert.False(t, ok)
 		assert.Equal(t, []string{"AtlasDatabaseUser/user"}, notReady)
 	})
 }
 
-func TestLoadDeploymentAndUser(t *testing.T) {
+func TestPair_LoadPairedResources(t *testing.T) {
 	scheme := runtime.NewScheme()
 	utilruntime.Must(akov2.AddToScheme(scheme))
 
@@ -333,26 +348,8 @@ func TestLoadDeploymentAndUser(t *testing.T) {
 		databaseUsername string
 		deployments      []client.Object
 		users            []client.Object
-		expectedErr      string
+		expectedErr      error
 	}{
-		"successfully finds one deployment and one user": {
-			clusterName:      "clusterA",
-			databaseUsername: "admin",
-			deployments: []client.Object{
-				&akov2.AtlasDeployment{
-					ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: ns},
-					Spec: akov2.AtlasDeploymentSpec{
-						DeploymentSpec: &akov2.AdvancedDeploymentSpec{Name: "clusterA"},
-					},
-				},
-			},
-			users: []client.Object{
-				&akov2.AtlasDatabaseUser{
-					ObjectMeta: metav1.ObjectMeta{Name: "user1", Namespace: ns},
-					Spec:       akov2.AtlasDatabaseUserSpec{Username: "admin"},
-				},
-			},
-		},
 		"no deployments found overall": {
 			clusterName:      "clusterA",
 			databaseUsername: "admin",
@@ -362,7 +359,7 @@ func TestLoadDeploymentAndUser(t *testing.T) {
 					Spec:       akov2.AtlasDatabaseUserSpec{Username: "admin"},
 				},
 			},
-			expectedErr: `expected 1 AtlasDeployment for "proj123-clusterA", found 0`,
+			expectedErr: ErrNoDeploymentFound,
 		},
 		"no deployments found due to missing index": {
 			clusterName:      "clusterB",
@@ -381,7 +378,7 @@ func TestLoadDeploymentAndUser(t *testing.T) {
 					Spec:       akov2.AtlasDatabaseUserSpec{Username: "admin"},
 				},
 			},
-			expectedErr: `expected 1 AtlasDeployment for "proj123-clusterB", found 0`,
+			expectedErr: ErrNoDeploymentFound,
 		},
 		"multiple users found": {
 			clusterName:      "clusterA",
@@ -404,7 +401,25 @@ func TestLoadDeploymentAndUser(t *testing.T) {
 					Spec:       akov2.AtlasDatabaseUserSpec{Username: "admin"},
 				},
 			},
-			expectedErr: `expected 1 AtlasDatabaseUser for "proj123-admin", found 2`,
+			expectedErr: ErrManyUsers,
+		},
+		"successfully finds one deployment and one user": {
+			clusterName:      "clusterA",
+			databaseUsername: "admin",
+			deployments: []client.Object{
+				&akov2.AtlasDeployment{
+					ObjectMeta: metav1.ObjectMeta{Name: "dep1", Namespace: ns},
+					Spec: akov2.AtlasDeploymentSpec{
+						DeploymentSpec: &akov2.AdvancedDeploymentSpec{Name: "clusterA"},
+					},
+				},
+			},
+			users: []client.Object{
+				&akov2.AtlasDatabaseUser{
+					ObjectMeta: metav1.ObjectMeta{Name: "user1", Namespace: ns},
+					Spec:       akov2.AtlasDatabaseUserSpec{Username: "admin"},
+				},
+			},
 		},
 	}
 
@@ -423,7 +438,7 @@ func TestLoadDeploymentAndUser(t *testing.T) {
 				}).
 				Build()
 
-			ids := RequestNameParts{
+			ids := ConnSecretIdentifiers{
 				ProjectID:        projectID,
 				ClusterName:      tt.clusterName,
 				DatabaseUsername: tt.databaseUsername,
@@ -431,18 +446,17 @@ func TestLoadDeploymentAndUser(t *testing.T) {
 
 			pair, err := LoadPairedResources(context.Background(), client, ids, ns)
 
-			if tt.expectedErr == "" {
+			if tt.expectedErr == nil {
 				assert.NoError(t, err)
 				assert.NotNil(t, pair.Deployment)
 				assert.NotNil(t, pair.User)
 				assert.Equal(t, tt.clusterName, pair.Deployment.GetDeploymentName())
 				assert.Equal(t, tt.databaseUsername, pair.User.Spec.Username)
 			} else {
-				assert.Error(t, err)
-				assert.Contains(t, err.Error(), tt.expectedErr)
+				assert.ErrorIs(t, err, tt.expectedErr)
 			}
 
-			failIDs := RequestNameParts{
+			failIDs := ConnSecretIdentifiers{
 				ProjectID:        otherprojectID,
 				ClusterName:      tt.clusterName,
 				DatabaseUsername: tt.databaseUsername,
@@ -451,7 +465,7 @@ func TestLoadDeploymentAndUser(t *testing.T) {
 			failPair, failErr := LoadPairedResources(context.Background(), client, failIDs, ns)
 			assert.Error(t, failErr)
 			assert.Nil(t, failPair)
-			assert.Contains(t, failErr.Error(), fmt.Sprintf(`expected 1 AtlasDeployment for "%s-%s"`, otherprojectID, tt.clusterName))
+			assert.ErrorIs(t, failErr, ErrNoDeploymentFound)
 		})
 	}
 }
@@ -521,9 +535,10 @@ func TestPair_BuildConnectionData(t *testing.T) {
 		WithObjects(secret, user, deployment).
 		Build()
 
-	p := &ConnectionPair{
+	p := &ConnSecretPair{
 		Deployment: deployment,
 		User:       user,
+		ProjectID:  "proj123",
 	}
 
 	data, err := p.BuildConnectionData(context.Background(), client)

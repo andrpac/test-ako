@@ -19,9 +19,13 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/kube"
 	"github.com/mongodb/mongodb-atlas-kubernetes/v2/internal/stringutil"
 )
 
@@ -54,4 +58,35 @@ func ReapOrphanConnectionSecrets(ctx context.Context, k8sClient client.Client, p
 		}
 	}
 	return removedOrphanSecrets, nil
+}
+
+func (r *ConnectionSecretReconciler) handleDelete(ctx context.Context, req ctrl.Request) {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      req.Name,
+			Namespace: req.Namespace,
+		},
+	}
+
+	if err := r.Client.Get(ctx, kube.ObjectKeyFromObject(secret), secret); err != nil {
+		if apierrors.IsNotFound(err) {
+			return
+		}
+		r.Log.Errorf("Unable to retrieve ConnectionSecret %q in namespace %q: %v", req.Name, req.Namespace, err)
+		return
+	}
+
+	if secret.GetDeletionTimestamp() != nil {
+		return
+	}
+
+	if err := r.Client.Delete(ctx, secret); err != nil {
+		if apierrors.IsNotFound(err) {
+			return
+		}
+		r.Log.Errorf("Failed to delete ConnectionSecret %s/%s: %v", req.Namespace, req.Name, err)
+		return
+	}
+
+	r.EventRecorder.Event(secret, corev1.EventTypeNormal, "Deleted", "ConnectionSecret deleted")
 }

@@ -63,12 +63,13 @@ func TestConnectionSecretReconcile(t *testing.T) {
 
 	tests := map[string]testCase{
 		"fail: invalid secret name format": {
-			reqName:   "invalid-format",
+			reqName:   "invalid$format",
 			expectErr: true,
 		},
-		"fail: K8s format secret with missing secret": {
-			reqName:   "myproject-cluster1-admin",
-			expectErr: true,
+		"success: K8s format secret with missing secret": {
+			reqName:        "myproject-cluster1-admin",
+			expectErr:      false,
+			expectedResult: ctrl.Result{},
 		},
 		"fail: missing deployment": {
 			reqName: "test-project-id$cluster1$admin",
@@ -94,7 +95,8 @@ func TestConnectionSecretReconcile(t *testing.T) {
 					Data:       map[string][]byte{"password": []byte("test-pass")},
 				},
 			},
-			expectErr: true,
+			expectErr:      false,
+			expectedResult: ctrl.Result{},
 		},
 		"fail: K8s format secret with no labels": {
 			reqName: "myproject-cluster1-admin",
@@ -210,7 +212,7 @@ func TestConnectionSecretReconcile(t *testing.T) {
 				},
 			},
 			expectedSecretName: "myproject-cluster1-admin",
-			expectedResult:     ctrl.Result{RequeueAfter: 30 * time.Second},
+			expectedResult:     ctrl.Result{},
 			expectErr:          false,
 		},
 		"success: both deployment and user use ProjectRef with internal format for request": {
@@ -289,7 +291,7 @@ func TestConnectionSecretReconcile(t *testing.T) {
 				},
 			},
 			expectedSecretName: "myproject-cluster1-admin",
-			expectedResult:     ctrl.Result{RequeueAfter: 30 * time.Second},
+			expectedResult:     ctrl.Result{},
 			expectErr:          false,
 		},
 		"success: both deployment and user use ExternalRef (SDK required) with internal format for request": {
@@ -344,7 +346,7 @@ func TestConnectionSecretReconcile(t *testing.T) {
 				},
 			},
 			expectedSecretName: "myproject-cluster1-admin",
-			expectedResult:     ctrl.Result{RequeueAfter: 30 * time.Second},
+			expectedResult:     ctrl.Result{},
 			expectErr:          false,
 		},
 	}
@@ -370,19 +372,32 @@ func TestConnectionSecretReconcile(t *testing.T) {
 			}
 			objects = append(objects, tc.secrets...)
 
+			// Build a preClient just to satisfy any indexer helpers that inspect objects.
 			preClient := fake.NewClientBuilder().
 				WithScheme(scheme).
 				WithObjects(objects...).
 				Build()
 
-			indexerDeployment := indexer.NewAtlasDeploymentBySpecNameIndexer(ctx, preClient, logger)
-			indexerDatabaseUser := indexer.NewAtlasDatabaseUserBySpecUsernameIndexer(ctx, preClient, logger)
+			_ = preClient
 
-			client := fake.NewClientBuilder().
+			compositeClient := fake.NewClientBuilder().
 				WithScheme(scheme).
 				WithObjects(objects...).
-				WithIndex(indexerDeployment.Object(), indexerDeployment.Name(), indexerDeployment.Keys).
-				WithIndex(indexerDatabaseUser.Object(), indexerDatabaseUser.Name(), indexerDatabaseUser.Keys).
+				WithIndex(&akov2.AtlasDeployment{}, indexer.AtlasDeploymentBySpecNameAndProjectID, func(obj client.Object) []string {
+					d := obj.(*akov2.AtlasDeployment)
+					if d.Spec.DeploymentSpec == nil || d.Spec.DeploymentSpec.Name == "" {
+						return nil
+					}
+					// These tests all use the same project ID: "test-project-id".
+					return []string{"test-project-id-" + d.Spec.DeploymentSpec.Name}
+				}).
+				WithIndex(&akov2.AtlasDatabaseUser{}, indexer.AtlasDatabaseUserBySpecUsernameAndProjectID, func(obj client.Object) []string {
+					u := obj.(*akov2.AtlasDatabaseUser)
+					if u.Spec.Username == "" {
+						return nil
+					}
+					return []string{"test-project-id-" + u.Spec.Username}
+				}).
 				Build()
 
 			atlasProvider := &atlasmock.TestProvider{
@@ -412,7 +427,7 @@ func TestConnectionSecretReconcile(t *testing.T) {
 
 			r := &ConnectionSecretReconciler{
 				AtlasReconciler: reconciler.AtlasReconciler{
-					Client:          client,
+					Client:          compositeClient,
 					Log:             logger.Sugar(),
 					GlobalSecretRef: types.NamespacedName{Name: "global-secret", Namespace: ns},
 					AtlasProvider:   atlasProvider,
@@ -436,7 +451,7 @@ func TestConnectionSecretReconcile(t *testing.T) {
 
 				if tc.expectedSecretName != "" {
 					var outputSecret corev1.Secret
-					err := client.Get(ctx, types.NamespacedName{
+					err := compositeClient.Get(ctx, types.NamespacedName{
 						Namespace: ns,
 						Name:      tc.expectedSecretName,
 					}, &outputSecret)
@@ -579,19 +594,32 @@ func TestConnectionSecretReconcile_MultiDeploymentMultiUser(t *testing.T) {
 	objs = append(objs, project)
 	objs = append(objs, secrets...)
 
+	// Build a preClient (not strictly required now, but harmless).
 	preClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(objs...).
 		Build()
 
-	indexerDeployment := indexer.NewAtlasDeploymentBySpecNameIndexer(ctx, preClient, logger)
-	indexerDatabaseUser := indexer.NewAtlasDatabaseUserBySpecUsernameIndexer(ctx, preClient, logger)
+	_ = preClient
 
-	client := fake.NewClientBuilder().
+	// Register composite-key indexers expected by LoadPairedResources.
+	clientWithIndexes := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(objs...).
-		WithIndex(indexerDeployment.Object(), indexerDeployment.Name(), indexerDeployment.Keys).
-		WithIndex(indexerDatabaseUser.Object(), indexerDatabaseUser.Name(), indexerDatabaseUser.Keys).
+		WithIndex(&akov2.AtlasDeployment{}, indexer.AtlasDeploymentBySpecNameAndProjectID, func(obj client.Object) []string {
+			d := obj.(*akov2.AtlasDeployment)
+			if d.Spec.DeploymentSpec == nil || d.Spec.DeploymentSpec.Name == "" {
+				return nil
+			}
+			return []string{"test-project-id-" + d.Spec.DeploymentSpec.Name}
+		}).
+		WithIndex(&akov2.AtlasDatabaseUser{}, indexer.AtlasDatabaseUserBySpecUsernameAndProjectID, func(obj client.Object) []string {
+			u := obj.(*akov2.AtlasDatabaseUser)
+			if u.Spec.Username == "" {
+				return nil
+			}
+			return []string{"test-project-id-" + u.Spec.Username}
+		}).
 		Build()
 
 	atlasProvider := &atlasmock.TestProvider{
@@ -621,7 +649,7 @@ func TestConnectionSecretReconcile_MultiDeploymentMultiUser(t *testing.T) {
 
 	r := &ConnectionSecretReconciler{
 		AtlasReconciler: reconciler.AtlasReconciler{
-			Client:          client,
+			Client:          clientWithIndexes,
 			Log:             logger.Sugar(),
 			GlobalSecretRef: types.NamespacedName{Name: "global-secret", Namespace: ns},
 			AtlasProvider:   atlasProvider,
@@ -641,11 +669,11 @@ func TestConnectionSecretReconcile_MultiDeploymentMultiUser(t *testing.T) {
 
 			res, err := r.Reconcile(ctx, req)
 			assert.NoError(t, err, "Reconcile failed for %s", reqName)
-			assert.Equal(t, ctrl.Result{RequeueAfter: 30 * time.Second}, res, "Unexpected result for %s", reqName)
+			assert.Equal(t, ctrl.Result{}, res, "Unexpected result for %s", reqName)
 
 			expectedSecretName := "myproject-" + d.Spec.DeploymentSpec.Name + "-" + u.Spec.Username
 			var outputSecret corev1.Secret
-			err = client.Get(ctx, types.NamespacedName{
+			err = clientWithIndexes.Get(ctx, types.NamespacedName{
 				Namespace: ns,
 				Name:      expectedSecretName,
 			}, &outputSecret)

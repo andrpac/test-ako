@@ -16,12 +16,13 @@ package connectionsecret
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
+	apiErrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
@@ -30,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/cluster"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -53,92 +55,140 @@ type ConnectionSecretReconciler struct {
 
 func (r *ConnectionSecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	// Parses the request name and fills up the identifiers: ProjectID, ClusterName, DatabaseUsername
-	ids, err := LoadRequestNameParts(ctx, r.Client, req.NamespacedName)
+	strRequest := req.NamespacedName.String()
+	ids, err := LoadRequestIdentifiers(ctx, r.Client, req.NamespacedName)
 	if err != nil {
-		r.Log.Errorw("Failed to parse request name", "error", err)
+		if apiErrors.IsNotFound(err) {
+			r.Log.Warnf("ConnectionSecret not found; assuming it was deleted %s", strRequest)
+			return workflow.TerminateSilently(err).WithoutRetry().ReconcileResult()
+		}
+
+		r.Log.Errorf("Failed to parse ConnectionSecret request with %s: %e", strRequest, err)
 		return workflow.Terminate("InvalidConnectionSecretName", err).ReconcileResult()
 	}
 
 	// Loads the pair of AtlasDeployment and AtlasDatabaseUser via the indexers
 	pair, err := LoadPairedResources(ctx, r.Client, ids, req.Namespace)
 	if err != nil {
-		r.Log.Errorw("Failed to fetch deployment and user", "error", err)
-		return workflow.Terminate("InvalidConnectionResources", err).ReconcileResult()
+		switch {
+		case errors.Is(err, ErrNoDeploymentFound),
+			errors.Is(err, ErrNoUserFound):
+
+			r.Log.Info("Paired resource missing for ConnectionSecret request with %s — scheduling deletion", strRequest)
+			r.handleDelete(ctx, req)
+			return workflow.TerminateSilently(nil).WithoutRetry().ReconcileResult()
+
+		case errors.Is(err, ErrManyDeployments),
+			errors.Is(err, ErrManyUsers):
+			r.Log.Errorf("Ambiguous pairing (more than one) for ConnectionSecret request with %s", strRequest)
+			return workflow.Terminate("AmbiguousConnectionResources", err).ReconcileResult()
+
+		default:
+			r.Log.Errorf("Failed to get paired resources ConnectionSecret request with %s: %v", strRequest, err)
+			return workflow.Terminate("InvalidConnectionResources", err).ReconcileResult()
+		}
 	}
 
-	// Checks is the pair is ready
-	if ready, notReady := pair.AreResourcesReady(); !ready {
+	// If either AtlasDeployment or AtlasDatabaseUser have a deletion timestamp, delete the connection secret as well
+	if pair.IsDeleting() {
+		r.Log.Infof("Paired resource marked for deletion for ConnectionSecret with %s — scheduling deletion", strRequest)
+		r.handleDelete(ctx, req)
+		return workflow.TerminateSilently(nil).WithoutRetry().ReconcileResult()
+	}
+
+	// Checks that AtlasDeployment and AtlasDatabaseUser are ready before proceeding
+	if ready, notReady := pair.IsReady(); !ready {
+		r.Log.Infof("Waiting till paired resources are ready for ConnectionSecret request with %s", strRequest)
 		return workflow.InProgress("ConnectionSecretNotReady", fmt.Sprintf("Not ready: %s", strings.Join(notReady, ", "))).ReconcileResult()
 	}
 
-	// Check if we have a ProjectName which is required for the K8s naming format
+	// ProjectName is required for ConnectionSecret metadata.name
 	if ids.ProjectName == "" {
 		// If both AtlasDeployment and AtlasDatabaseUser use externalRef, resolve via SDK
 		if pair.NeedsSDKProjectResolution() {
 			connectionConfig, err := r.ResolveConnectionConfig(ctx, pair.Deployment)
 			if err != nil {
-				r.Log.Errorw("Failed to resolve Atlas connection config", "error", err)
+				r.Log.Errorf("Failed to resolve Atlas connection config for ConnectionSecret request with %s: %e", strRequest, err)
 				return workflow.Terminate("FailedToResolveConnectionConfig", err).ReconcileResult()
 			}
 
 			sdkClientSet, err := r.AtlasProvider.SdkClientSet(ctx, connectionConfig.Credentials, r.Log)
 			if err != nil {
-				r.Log.Errorw("Failed to create SDK client", "error", err)
+				r.Log.Errorw("Failed to create SDK client for ConnectionSecret request with %s: %e", strRequest, err)
 				return workflow.Terminate("FailedToCreateAtlasClient", err).ReconcileResult()
 			}
 
 			projectService := project.NewProjectAPIService(sdkClientSet.SdkClient20250312002.ProjectsApi)
-			err = pair.ResolveProjectNameSDK(ctx, projectService)
+			ids.ProjectName, err = pair.ResolveProjectNameSDK(ctx, projectService)
 			if err != nil {
-				r.Log.Errorw("Failed to fetch project from Atlas API", "projectID", ids.ProjectID, "error", err)
+				r.Log.Errorw("Failed to resolve ProjectName for ConnectionSecret request with %s: %e", strRequest, err)
 				return workflow.Terminate("FailedToFetchProjectFromAtlas", err).ReconcileResult()
 			}
 		} else { // Otherwise, fetch AtlasProject from K8s
-			err = pair.ResolveProjectNameK8s(ctx, r.Client, req.Namespace)
-			if err != nil {
-				r.Log.Errorw("Failed to retrieve AtlasProject to resolve ProjectName", "projectID", ids.ProjectID, "error", err)
-				return workflow.Terminate("FailedToResolveProjectName", err).ReconcileResult()
+			var resolveErr error
+			ids.ProjectName, resolveErr = pair.ResolveProjectNameK8s(ctx, r.Client, req.Namespace)
+			if resolveErr != nil {
+				r.Log.Errorw("Failed to resolve ProjectName for ConnectionSecret request with %s: %e", strRequest, err)
+				return workflow.Terminate("FailedToResolveProjectName", resolveErr).ReconcileResult()
 			}
 		}
 	}
 
-	// Retrives the connection data
+	// Compute the connection data
 	data, err := pair.BuildConnectionData(ctx, r.Client)
 	if err != nil {
-		r.Log.Errorw("Failed to build connection data", "error", err)
+		r.Log.Errorw("Failed to build connection data for ConnectionSecret request with %s: %e", strRequest, err)
 		return workflow.Terminate("FailedToBuildConnectionData", err).ReconcileResult()
 	}
 
-	// Creates or Updates the connection secret
-	if err := pair.HandleSecret(ctx, r.Client, data); err != nil {
-		r.Log.Errorw("Failed to create or update connection Secret", "error", err)
+	// Create or update the connection secret in K8s cluster
+	if err := pair.HandleSecret(ctx, r.Client, ids, data); err != nil {
+		r.Log.Errorw("Failed to create/update the ConnectionSecret for request with %s: %e", "error", err)
 		return workflow.Terminate("FailedToEnsureConnectionSecret", err).ReconcileResult()
 	}
 
-	r.Log.Infow("Successfully found associated resources",
-		"deployment", pair.Deployment.GetDeploymentName(),
-		"user", pair.User.Spec.Username,
-		"projectID", ids.ProjectID,
-	)
-
-	return reconcile.Result{RequeueAfter: 30 * time.Second}, nil
+	return workflow.OK().ReconcileResult()
 }
 
-func (r *ConnectionSecretReconciler) DeploymentReadyPredicate() predicate.Predicate {
-	return predicate.NewPredicateFuncs(func(obj client.Object) bool {
-		d, ok := obj.(*akov2.AtlasDeployment)
-		return ok && IsDeploymentReady(d)
-	})
+func (r *ConnectionSecretReconciler) DeploymentWatcherPredicate() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc:  func(e event.CreateEvent) bool { return false },
+		GenericFunc: func(e event.GenericEvent) bool { return false },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			d, ok := e.ObjectNew.(*akov2.AtlasDeployment)
+			if !ok {
+				return false
+			}
+			return IsDeploymentReady(d) && len(d.GetFinalizers()) > 0
+		},
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			d, ok := e.Object.(*akov2.AtlasDeployment)
+			if !ok {
+				return false
+			}
+			return len(d.GetFinalizers()) > 0
+		},
+	}
 }
 
-func (r *ConnectionSecretReconciler) DatabaseUserReadyPredicate() predicate.Predicate {
-	return predicate.NewPredicateFuncs(func(obj client.Object) bool {
-		u, ok := obj.(*akov2.AtlasDatabaseUser)
-		return ok && IsDatabaseUserReady(u)
-	})
+func (r *ConnectionSecretReconciler) DatabaseUserWatcherPredicate() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc:  func(e event.CreateEvent) bool { return false },
+		GenericFunc: func(e event.GenericEvent) bool { return false },
+		DeleteFunc:  func(e event.DeleteEvent) bool { return false },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			u, ok := e.ObjectNew.(*akov2.AtlasDatabaseUser)
+			if !ok {
+				return false
+			}
+
+			return IsDatabaseUserReady(u)
+		},
+	}
 }
 
 func (r *ConnectionSecretReconciler) For() (client.Object, builder.Predicates) {
+	// Filter out connection secrets based on the required labels
 	labelPredicates := predicate.NewPredicateFuncs(func(obj client.Object) bool {
 		labels := obj.GetLabels()
 		_, hasType := labels[TypeLabelKey]
@@ -158,12 +208,12 @@ func (r *ConnectionSecretReconciler) SetupWithManager(mgr ctrl.Manager, skipName
 		Watches(
 			&akov2.AtlasDeployment{},
 			handler.EnqueueRequestsFromMapFunc(r.newDeploymentMapFunc),
-			builder.WithPredicates(r.DeploymentReadyPredicate()),
+			builder.WithPredicates(r.DeploymentWatcherPredicate()),
 		).
 		Watches(
 			&akov2.AtlasDatabaseUser{},
 			handler.EnqueueRequestsFromMapFunc(r.newDatabaseUserMapFunc),
-			builder.WithPredicates(r.DatabaseUserReadyPredicate()),
+			builder.WithPredicates(r.DatabaseUserWatcherPredicate()),
 		).
 		WithOptions(controller.TypedOptions[reconcile.Request]{
 			RateLimiter:        ratelimit.NewRateLimiter[reconcile.Request](),
