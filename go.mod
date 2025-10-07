@@ -25,7 +25,7 @@ require (
 	github.com/onsi/ginkgo/v2 v2.23.4
 	github.com/onsi/gomega v1.37.0
 	github.com/sethvargo/go-password v0.3.1
-	github.com/stretchr/testify v1.10.0
+	github.com/stretchr/testify v1.11.1
 	go.mongodb.org/atlas v0.38.0
 	go.mongodb.org/atlas-sdk/v20250312002 v20250312002.0.0
 	go.mongodb.org/mongo-driver v1.17.4
