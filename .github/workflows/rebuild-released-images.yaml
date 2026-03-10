@@ -192,7 +192,7 @@ jobs:
           username: ${{ env.QUAY_ROBOT_NAME }}
           password: ${{ secrets.QUAY_PASSWORD }}
       - name: Build and push operator to the DockerHub (daily-tag & release-tag)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ${{ steps.pick-dockerfile.outputs.dockerfile }}
