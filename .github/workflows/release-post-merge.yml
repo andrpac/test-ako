@@ -191,7 +191,7 @@ jobs:
 
       - name: Login to artifactory.corp.mongodb.com
         if: steps.check-signing-support.outputs.sign == 'true'
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: artifactory.corp.mongodb.com
           username: ${{ secrets.MDB_ARTIFACTORY_USERNAME }}
