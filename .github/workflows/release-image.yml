@@ -104,7 +104,7 @@ jobs:
           password: ${{ secrets.QUAY_PASSWORD }}
 
       - name: Install devbox
-        uses: jetify-com/devbox-install-action@v0.13.0
+        uses: jetify-com/devbox-install-action@v0.15.0
 
       # Move prerelease images to official release registries in Docker Hub and Quay 
       - name: Move image to Docker registry release from prerelease
