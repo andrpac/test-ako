@@ -187,7 +187,7 @@ jobs:
           awk '{gsub(/cloud.mongodb.com/, "cloud-qa.mongodb.com", $0); print}' bundle/manifests/mongodb-atlas-kubernetes.clusterserviceversion.yaml > tmp && mv tmp bundle/manifests/mongodb-atlas-kubernetes.clusterserviceversion.yaml
 
       - name: Cache repo files
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ./*
@@ -263,7 +263,7 @@ jobs:
     steps:
       - name: Get repo files from cache
         id: get-repo-files-from-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ./*
           key: ${{ github.sha }}
@@ -374,7 +374,7 @@ jobs:
     steps:
       - name: Get repo files from cache
         id: get-repo-files-from-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ./*
           key: ${{ github.sha }}
