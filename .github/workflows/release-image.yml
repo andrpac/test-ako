@@ -170,7 +170,7 @@ jobs:
           git push -f origin ${{ env.VERSION }}
 
       - name: Create release on GitHub with all updated artifacts
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           draft: true
           prerelease: false
