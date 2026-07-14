@@ -25,7 +25,7 @@ jobs:
         run: devbox run -- 'make test-tools'
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v7
         with:
           name: unit-tests
           flags: unit
